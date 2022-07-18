@@ -14,12 +14,12 @@ function MK_ord()
     }
 
     foreach ($items as $key => $value) {
-        $query   = mysql_query("SELECT balance FROM users WHERE id = '$user_id'");
-        $balance = mysql_fetch_row($query);
+        $query   = mysqli_query("SELECT balance FROM users WHERE id = '$user_id'");
+        $balance = mysqli_fetch_row($query);
 
         if ($prices[$key] < $balance) {
             $sql = "UPDATE users SET balance = balance - ".$prices[$key];
-            if (!mysql_query($conn, $sql)) {
+            if (!mysqli_query($conn, $sql)) {
                 die('Ошибка');
             }
             $order_items[] = $value;
@@ -32,9 +32,9 @@ function MK_ord()
     $sql = "INSERT INTO orders ($user_id, $items, $sum) 
 			VALUES ($user_id, '".implode(';', $order_items)."', $order_price)";
 
-    if (!mysql_query($conn, $sql)) {
+    if (!mysqli_query($conn, $sql)) {
         die('Ошибка');
     }
 
-    echo "Номер вашего заказа: ".mysql_insert_id();
+    echo "Номер вашего заказа: ".mysqli_insert_id($conn);
 }
