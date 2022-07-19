@@ -2,6 +2,15 @@
 //Функция создаёт заказ в БД интернет магазина.
 //Задача: указать все ошибки и недостатки, сделать рефакторинг.
 
+
+/**
+ * Самая серьезная проблема это то, что может быть нарушена консистентность данных. Баланс может уменьшиться,
+ * а заказ не создаться. Для того чтобы это не происходило, логику надо завернуть в транзакцию.
+ * Добавить обработку исключений, и при получении исключения откатить транзакцию.
+ *
+ * @return void
+ *
+ */
 function MK_ord(): void
 {
     $user_id = (int) $_GET['user'];
@@ -16,47 +25,56 @@ function MK_ord(): void
     $orderSum   = 0;
     $orderItems = [];
 
-    foreach ($items as $key => $value) {
-        $itemPrice = $prices[$key] ?? die('Для товара отсутствует цена');
-        $itemPrice = (float) $itemPrice;
+    try {
+        mysqli_begin_transaction($link);
 
-        $query = mysqli_query(
-            $link,
-            sprintf('SELECT balance FROM users WHERE id = %d', $user_id)
-        );
+        foreach ($items as $key => $value) {
+            $itemPrice = $prices[$key] ?? throw new RuntimeException('Для товара отсутствует цена');
+            $itemPrice = (float) $itemPrice;
 
-        $balance = mysqli_fetch_row($query);
+            $query = mysqli_query(
+                $link,
+                sprintf('SELECT balance FROM users WHERE id = %d', $user_id)
+            );
 
-        if ($itemPrice > $balance) {
-            break;
+            $balance = mysqli_fetch_row($query);
+
+            if ($itemPrice > $balance) {
+                break;
+            }
+
+            if (!mysqli_query(
+                $link,
+                sprintf('UPDATE users SET balance = balance - %d WHERE user_id=%d', $itemPrice, $user_id)
+            )) {
+                throw new RuntimeException('Ошибка списания с баланса пользователя');
+            }
+
+            $orderItems[] = $value;
+            $orderSum     += $itemPrice;
+        }
+
+        if (count($orderItems) === 0) {
+            throw new RuntimeException('Ошибка обработки товаров при добавлении в заказ');
         }
 
         if (!mysqli_query(
             $link,
-            sprintf('UPDATE users SET balance = balance - %d WHERE user_id=%d', $itemPrice, $user_id)
+            sprintf(
+                "INSERT INTO orders ('user_id', 'items', 'sum') VALUES (%d, '%s', %d)",
+                $user_id,
+                mysqli_real_escape_string($link, implode(';', $orderItems)),
+                $orderSum
+            )
         )) {
-            die('Ошибка списания с баланса пользователя');
+            throw new RuntimeException('Ошибка создание заказа.');
         }
 
-        $orderItems[] = $value;
-        $orderSum     += $itemPrice;
-    }
+        mysqli_commit($link);
+        echo "Номер вашего заказа: ".mysqli_insert_id($link);
 
-    if (count($orderItems) === 0) {
-        die('Ошибка обработки товаров при добавлении в заказ');
+    } catch (Throwable $e) {
+        mysqli_rollback($link);
+        die ($e->getMessage());
     }
-
-    if (!mysqli_query(
-        $link,
-        sprintf(
-            "INSERT INTO orders ('user_id', 'items', 'sum') VALUES (%d, '%s', %d)",
-            $user_id,
-            mysqli_real_escape_string($link, implode(';', $orderItems)),
-            $orderSum
-        )
-    )) {
-        die('Ошибка создание заказа.');
-    }
-
-    echo "Номер вашего заказа: ".mysqli_insert_id($link);
 }
