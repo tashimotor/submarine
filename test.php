@@ -10,14 +10,14 @@ function MK_ord(): void
 
     $link = mysqli_connect('localhost', 'mysql_user', 'mysql_password');
     if (!$link || !mysqli_set_charset($link, "utf8mb4")) {
-        die('Ошибка');
+        die('Ошибка подключения к серверу БД');
     }
 
     $orderSum   = 0;
     $orderItems = [];
 
     foreach ($items as $key => $value) {
-        $itemPrice = $prices[$key] ?? die('Ошибка');
+        $itemPrice = $prices[$key] ?? die('Для товара отсутствует цена');
         $itemPrice = (float) $itemPrice;
 
         $query = mysqli_query(
@@ -35,7 +35,7 @@ function MK_ord(): void
             $link,
             sprintf('UPDATE users SET balance = balance - %d WHERE user_id=%d', $itemPrice, $user_id)
         )) {
-            die('Ошибка');
+            die('Ошибка списания с баланса пользователя');
         }
 
         $orderItems[] = $value;
@@ -43,7 +43,7 @@ function MK_ord(): void
     }
 
     if (count($orderItems) === 0) {
-        die('Ошибка');
+        die('Ошибка обработки товаров при добавлении в заказ');
     }
 
     if (!mysqli_query(
@@ -55,7 +55,7 @@ function MK_ord(): void
             $orderSum
         )
     )) {
-        die('Ошибка');
+        die('Ошибка создание заказа.');
     }
 
     echo "Номер вашего заказа: ".mysqli_insert_id($link);
