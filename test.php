@@ -2,50 +2,70 @@
 //Функция создаёт заказ в БД интернет магазина.
 //Задача: указать все ошибки и недостатки, сделать рефакторинг.
 
-
 /**
- * Самая серьезная проблема это то, что может быть нарушена консистентность данных. Баланс может уменьшиться,
+ * Самая серьезная проблема - может быть нарушена консистентность данных. Баланс может уменьшиться,
  * а заказ не создаться. Для того чтобы это не происходило, логику надо завернуть в транзакцию.
- * Добавить обработку исключений, и при получении исключения откатить транзакцию.
+ * Добавить обработку исключений, и при получении исключения откатывать транзакцию.
+ *
+ * Вторая проблема - запросы в цикле. Это снижает производительность.
+ * Тут можно предложить не запрашивать и не списывать каждый раз баланс. Запросить один раз и списывать в памяти.
+ * Я не стал этого делать, потому что не знаю контекста работы функции.
+ * Непонятно должен ли заказ частично создаваться, или на балансе должны быть полная сумма всех товаров.
+ *
+ * Третья проблема - подстановка в запросы данных сразу из глобальных переменных, тут может получиться sql-инъекция.
+ * Я добавил обработку данных(экранирование и приведение к типу).
+ *
+ * Четвертая проблема - не проверяются данные полученные от клиента. Возможны кейсы когда в массиве prices, нет цены для
+ * какого-то товара. Я добавил примитивную проверку, но это необходимо делать отдельно и в другом места. Это не зона
+ * ответственности этой функции.
+ *
+ * Остальное по мелочи будет понятно из кода.
  *
  * @return void
  *
  */
 function MK_ord(): void
 {
-    $user_id = (int) $_GET['user'];
-    $items   = $_GET['item'];
-    $prices  = $_GET['price'];
+    $userId = (int) $_GET['user'];
+    $items  = $_GET['item'];
+    $prices = $_GET['price'];
+
+    if (empty($userId) || empty($items) || empty($prices)) {
+        die('Ошибка полученных данных');
+    }
 
     $link = mysqli_connect('localhost', 'mysql_user', 'mysql_password');
     if (!$link || !mysqli_set_charset($link, "utf8mb4")) {
         die('Ошибка подключения к серверу БД');
     }
 
-    $orderSum   = 0;
+    $orderSum   = 0.0;
     $orderItems = [];
 
     try {
         mysqli_begin_transaction($link);
 
         foreach ($items as $key => $value) {
-            $itemPrice = $prices[$key] ?? throw new RuntimeException('Для товара отсутствует цена');
-            $itemPrice = (float) $itemPrice;
+            $itemPrice = (float) ($prices[$key] ?? throw new RuntimeException('Для товара отсутствует цена'));
 
             $query = mysqli_query(
                 $link,
-                sprintf('SELECT balance FROM users WHERE id = %d', $user_id)
+                sprintf('SELECT balance FROM users WHERE id = %d', $userId)
             );
 
             $balance = mysqli_fetch_row($query);
 
-            if ($itemPrice > $balance) {
+            if ($balance === false || $balance === null) {
+                throw new RuntimeException('Ошибка получения баланса пользователя');
+            }
+
+            if ($itemPrice > $balance[0]) {
                 break;
             }
 
             if (!mysqli_query(
                 $link,
-                sprintf('UPDATE users SET balance = balance - %d WHERE user_id=%d', $itemPrice, $user_id)
+                sprintf('UPDATE users SET balance = balance - %d WHERE user_id=%d', $itemPrice, $userId)
             )) {
                 throw new RuntimeException('Ошибка списания с баланса пользователя');
             }
@@ -62,7 +82,7 @@ function MK_ord(): void
             $link,
             sprintf(
                 "INSERT INTO orders ('user_id', 'items', 'sum') VALUES (%d, '%s', %d)",
-                $user_id,
+                $userId,
                 mysqli_real_escape_string($link, implode(';', $orderItems)),
                 $orderSum
             )
@@ -72,7 +92,6 @@ function MK_ord(): void
 
         mysqli_commit($link);
         echo "Номер вашего заказа: ".mysqli_insert_id($link);
-
     } catch (Throwable $e) {
         mysqli_rollback($link);
         die ($e->getMessage());
