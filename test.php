@@ -1,6 +1,10 @@
 <?php
 //Функция создаёт заказ в БД интернет магазина.
 //Задача: указать все ошибки и недостатки, сделать рефакторинг.
+use Entities\OrderRequestEntity;
+use Models\Balance;
+use Models\Order;
+use Modules\Database\MysqlLink;
 
 /**
  * Самая серьезная проблема - может быть нарушена консистентность данных. Баланс может уменьшиться,
@@ -21,79 +25,47 @@
  *
  * Остальное по мелочи будет понятно из кода.
  *
+ * Переписал всс на ООП и DTO, убрал запросы в цикле, пусть будет невозможно оформить заказ, если баланс меньше суммы заказа.
+ *
+ * Теперь все легко покрывается unit тестами.
+ *
  * @return void
  *
  */
 function MK_ord(): void
 {
-    $userId = (int) $_GET['user'];
-    $items  = $_GET['item'];
-    $prices = $_GET['price'];
+    $orderRequest = new OrderRequestEntity($_GET['user'], $_GET['item'], $_GET['price']);
 
-    if (empty($userId) || empty($items) || empty($prices)) {
-        die('Ошибка полученных данных');
+    $database = new MysqlLink();
+
+    $balance    = new Balance($database, $orderRequest->getUserId());
+    $balanceSum = $balance->get();
+    if ($balanceSum === null) {
+        die('Ошибка получения баланса пользователя');
     }
 
-    $link = mysqli_connect('localhost', 'mysql_user', 'mysql_password');
-    if (!$link || !mysqli_set_charset($link, "utf8mb4")) {
-        die('Ошибка подключения к серверу БД');
+    $order = new Order($database, $orderRequest->getUserId());
+
+    foreach ($orderRequest->getItems() as $item) {
+        $order->addItem($item->getName(), $item->getPrice());
+
+        if ($order->getSum() < $balanceSum) {
+            die('Недостаточно средств');
+        }
     }
 
-    $orderSum   = 0.0;
-    $orderItems = [];
+    mysqli_begin_transaction($database->getLink());
 
     try {
-        mysqli_begin_transaction($link);
+        $balance->update($balanceSum - $order->getSum());
+        $orderId = $order->save();
 
-        foreach ($items as $key => $value) {
-            $itemPrice = (float) ($prices[$key] ?? throw new RuntimeException('Для товара отсутствует цена'));
+        mysqli_commit($database->getLink());
 
-            $query = mysqli_query(
-                $link,
-                sprintf('SELECT balance FROM users WHERE id = %d', $userId)
-            );
-
-            $balance = mysqli_fetch_row($query);
-
-            if ($balance === false || $balance === null) {
-                throw new RuntimeException('Ошибка получения баланса пользователя');
-            }
-
-            if ($itemPrice > $balance[0]) {
-                break;
-            }
-
-            if (!mysqli_query(
-                $link,
-                sprintf('UPDATE users SET balance = balance - %d WHERE user_id=%d', $itemPrice, $userId)
-            )) {
-                throw new RuntimeException('Ошибка списания с баланса пользователя');
-            }
-
-            $orderItems[] = $value;
-            $orderSum     += $itemPrice;
-        }
-
-        if (count($orderItems) === 0) {
-            throw new RuntimeException('Ошибка обработки товаров при добавлении в заказ');
-        }
-
-        if (!mysqli_query(
-            $link,
-            sprintf(
-                "INSERT INTO orders ('user_id', 'items', 'sum') VALUES (%d, '%s', %d)",
-                $userId,
-                mysqli_real_escape_string($link, implode(';', $orderItems)),
-                $orderSum
-            )
-        )) {
-            throw new RuntimeException('Ошибка создание заказа.');
-        }
-
-        mysqli_commit($link);
-        echo "Номер вашего заказа: ".mysqli_insert_id($link);
+        echo "Номер вашего заказа: ".$orderId;
     } catch (Throwable $e) {
-        mysqli_rollback($link);
+        mysqli_rollback($database->getLink());
+
         die ($e->getMessage());
     }
 }
